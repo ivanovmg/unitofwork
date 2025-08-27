@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import uuid
 
@@ -9,6 +11,11 @@ from unitofwork import UnitOfWork
 class Entity:
     def __init__(self) -> None:
         self.id_number = uuid.uuid4()
+
+    def __eq__(self, other: Entity) -> bool:
+        if not isinstance(other, Entity):
+            return NotImplemented
+        return self.id_number == other.id_number
 
 
 class FakeRepo:
@@ -73,4 +80,29 @@ def test_TransactionFailure_BothReposOperationRolledBack() -> None:
         pass
 
     assert good_repo.list_all() == []
+    assert failing_repo.list_all() == []
+
+
+def test_SecondTransactionFailure_BothReposOperationRolledBack() -> None:
+    class FakeRepoWithFailingAdd(FakeRepo):
+        def add(self, entity: Entity) -> None:
+            raise ValueError('Operation failed')
+
+    entity = Entity()
+    good_repo = FakeRepo()
+    failing_repo = FakeRepoWithFailingAdd()
+
+    with UnitOfWork(good_repo) as uow:
+        uow.register_operation(lambda: good_repo.add(entity))
+
+    assert good_repo.list_all() == [entity]
+
+    try:
+        with UnitOfWork(good_repo, failing_repo) as uow:
+            uow.register_operation(lambda: good_repo.add(Entity()))
+            uow.register_operation(lambda: failing_repo.add(Entity()))
+    except ValueError:
+        pass
+
+    assert good_repo.list_all() == [entity]
     assert failing_repo.list_all() == []
