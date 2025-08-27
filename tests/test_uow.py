@@ -39,13 +39,16 @@ def test_InsideContext_ExecuteOnExit() -> None:
 
 def test_TransactionFailure_RepoOperationRolledBack() -> None:
     class FakeRepoWithFailingAdd(FakeRepo):
-        def add(self) -> None:
+        def add(self, entity: Entity) -> None:
             raise ValueError('Operation failed')
 
     entity = Entity()
     repo = FakeRepoWithFailingAdd()
 
-    with UnitOfWork(repo) as uow:
-        uow.register_operation(lambda: repo.add(entity))
+    try:
+        with UnitOfWork(repo) as uow:
+            uow.register_operation(lambda: repo.add(entity))
+    except ValueError:
+        pass
 
     assert repo.list_all() == []
