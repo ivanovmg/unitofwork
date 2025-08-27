@@ -1,6 +1,8 @@
 import copy
 import uuid
 
+import pytest
+
 from unitofwork import UnitOfWork
 
 
@@ -52,3 +54,23 @@ def test_TransactionFailure_RepoOperationRolledBack() -> None:
         pass
 
     assert repo.list_all() == []
+
+
+def test_TransactionFailure_BothReposOperationRolledBack() -> None:
+    class FakeRepoWithFailingAdd(FakeRepo):
+        def add(self, entity: Entity) -> None:
+            raise ValueError('Operation failed')
+
+    entity = Entity()
+    good_repo = FakeRepo()
+    failing_repo = FakeRepoWithFailingAdd()
+
+    try:
+        with UnitOfWork(good_repo, failing_repo) as uow:
+            uow.register_operation(lambda: good_repo.add(entity))
+            uow.register_operation(lambda: failing_repo.add(entity))
+    except ValueError:
+        pass
+
+    assert good_repo.list_all() == []
+    assert failing_repo.list_all() == []
