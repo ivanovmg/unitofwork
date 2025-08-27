@@ -53,7 +53,7 @@ and coordinates the writing out of changes and the resolution of concurrency pro
 # Risk: Partial failures
 user_repo.add(user)        # Success
 product_repo.add(product)  # Failure - database error
-# Now user exists but product doesn't - inconsistent state!
+# Now user exists but product doesn't - inconsistent state, not OK!
 ```
 
 ### With Unit of Work
@@ -63,7 +63,7 @@ product_repo.add(product)  # Failure - database error
 with UnitOfWork(user_repo, product_repo) as uow:
     uow.register_operation(lambda: user_repo.add(user))
     uow.register_operation(lambda: product_repo.add(product))
-# Both succeed or both fail - guaranteed consistency!
+# Both succeed or both fail - guaranteed consistency, now it's OK!
 ```
 
 ## Usage Guide
