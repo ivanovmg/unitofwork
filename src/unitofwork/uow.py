@@ -1,8 +1,9 @@
-from copy import deepcopy
+from collections.abc import Callable
 from types import TracebackType
-from typing import Any, Callable, Iterable, List, Optional, Tuple, Union
+from typing import Any, Literal
 
 from .interfaces import SupportsRollback
+
 
 __all__ = [
     'UnitOfWork',
@@ -10,9 +11,9 @@ __all__ = [
 
 
 class UnitOfWork:
-    def __init__(self, *repositories: SupportsRollback):
-        self._operations: List[Callable[[], Any]] = []
-        self._snapshots: List[Tuple[SupportsRollback, Any]] = []
+    def __init__(self, *repositories: SupportsRollback[Any, Any]):
+        self._operations: list[Callable[[], Any]] = []
+        self._snapshots: list[tuple[SupportsRollback[Any, Any], Any]] = []
         self._in_context: bool = False
         self._committed: bool = False
         self._repositories = repositories
@@ -26,7 +27,7 @@ class UnitOfWork:
         else:
             self._operations.append(operation)
 
-    def register_repository(self, repo: SupportsRollback) -> None:
+    def register_repository(self, repo: SupportsRollback[Any, Any]) -> None:
         """
         Register a repository for state tracking (optional manual registration).
         """
@@ -51,37 +52,38 @@ class UnitOfWork:
                 operation()
 
             self._committed = True
-            self._clear()
+            self._operations.clear()
+            self._snapshots.clear()
 
         except Exception as e:
             self.rollback()
             raise e
 
     def rollback(self) -> None:
+        if self._committed:
+            raise RuntimeError('Cannot rollback after commit')
+
         for repo, snapshot in self._snapshots:
             try:
                 repo.restore(snapshot)
             except Exception:
-                continue  # Continue rolling back despite individual failures
+                continue
 
-        self._clear()
-
-    def _clear(self) -> None:
         self._operations.clear()
         self._snapshots.clear()
         self._committed = False
 
     def __enter__(self) -> 'UnitOfWork':
         self._in_context = True
-        self._auto_register_repositories()  # Auto-register on context entry
+        self._auto_register_repositories()
         return self
 
     def __exit__(
         self,
-        exc_type: Optional[type[BaseException]],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[TracebackType],
-    ) -> bool:
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> Literal[False]:
         self._in_context = False
 
         if exc_type is not None:

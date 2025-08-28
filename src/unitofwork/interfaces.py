@@ -1,12 +1,12 @@
 from abc import abstractmethod
-from typing import Generic, Protocol, TypeVar
+from typing import Protocol, TypeVar
 
 
 ID = TypeVar('ID')
 T = TypeVar('T')
 
 
-class SupportsRollback(Protocol, Generic[ID, T]):
+class SupportsRollback[ID, T](Protocol):
     """Protocol for repositories that support rollback functionality"""
 
     @abstractmethod
