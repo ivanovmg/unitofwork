@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Maxim Ivanov
+# SPDX-License-Identifier: MIT
+
 from abc import abstractmethod
 from typing import Protocol, TypeVar
 
