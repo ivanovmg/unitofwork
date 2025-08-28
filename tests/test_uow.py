@@ -248,7 +248,6 @@ def test_CommitTwice_RaisesRuntimeError() -> None:
 
 
 def test_RollbackAfterCommit_RaisesRuntimeError() -> None:
-    """Test that you can't rollback after successful commit"""
     repo = FakeRepo()
 
     with UnitOfWork(repo) as uow:
