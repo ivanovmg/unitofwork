@@ -54,6 +54,9 @@ class UnitOfWork:
             for operation in self._operations:
                 operation()
 
+            for repo, _ in self._snapshots:
+                repo.commit()
+
             self._committed = True
             self._operations.clear()
             self._snapshots.clear()

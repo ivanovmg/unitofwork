@@ -31,6 +31,9 @@ class FakeRepo:
     def restore(self, snapshot: dict[uuid.UUID, Entity]) -> None:
         self._items = snapshot
 
+    def commit(self) -> None:
+        pass
+
     def add(self, entity: Entity) -> None:
         self._items[entity.id_number] = entity
 

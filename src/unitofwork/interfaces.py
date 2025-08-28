@@ -1,8 +1,7 @@
 # Copyright (c) 2025 Maxim Ivanov
 # SPDX-License-Identifier: MIT
 
-from abc import abstractmethod
-from typing import Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 
 ID = TypeVar('ID')
@@ -12,12 +11,14 @@ T = TypeVar('T')
 class SupportsRollback[ID, T](Protocol):
     """Protocol for repositories that support rollback functionality"""
 
-    @abstractmethod
-    def checkpoint(self) -> dict[ID, T]:
-        """Return a snapshot of the current state"""
+    def checkpoint(self) -> Any:
+        """Return a snapshot of the current state."""
         pass
 
-    @abstractmethod
-    def restore(self, snapshot: dict[ID, T]) -> None:
-        """Restore state from a previously taken snapshot"""
+    def restore(self, snapshot: Any) -> None:
+        """Restore state from a previously taken snapshot."""
+        pass
+
+    def commit(self) -> None:
+        """Commit transaction, used in UnitOfWork."""
         pass
