@@ -1,6 +1,8 @@
 # Copyright (c) 2025 Maxim Ivanov
 # SPDX-License-Identifier: MIT
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -44,7 +46,7 @@ class RollbackError(UnitOfWorkError):
 
 
 @final
-class UnitOfWork(AbstractContextManager):
+class UnitOfWork(AbstractContextManager['UnitOfWork']):
     def __init__(self, *repositories: SupportsRollback):
         self._operations: list[Callable[[], Any]] = []
         self._snapshots: list[tuple[SupportsRollback, Any]] = []
@@ -120,7 +122,7 @@ class UnitOfWork(AbstractContextManager):
         self._operations.clear()
         self._snapshots.clear()
 
-    def __enter__(self) -> 'UnitOfWork':
+    def __enter__(self) -> UnitOfWork:
         if self._state != UnitOfWorkState.INITIAL:
             raise UnitOfWorkError('UnitOfWork can only be entered once')
 

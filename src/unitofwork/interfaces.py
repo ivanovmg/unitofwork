@@ -1,14 +1,10 @@
 # Copyright (c) 2025 Maxim Ivanov
 # SPDX-License-Identifier: MIT
 
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol
 
 
-ID = TypeVar('ID')
-T = TypeVar('T')
-
-
-class SupportsRollback[ID, T](Protocol):
+class SupportsRollback(Protocol):
     """Protocol for repositories that support rollback functionality"""
 
     def checkpoint(self) -> Any:

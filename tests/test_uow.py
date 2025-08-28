@@ -1,6 +1,12 @@
 # Copyright (c) 2025 Maxim Ivanov
 # SPDX-License-Identifier: MIT
 
+"""
+Note: We use # type: ignore[misc] to inherit from final classes in tests.
+This is a pragmatic exception for test readability
+and should not be used in production code.
+"""
+
 from __future__ import annotations
 
 import copy
@@ -52,7 +58,7 @@ class FailingToAddRepo(FakeRepo):
         raise ValueError('Failed to add')
 
 
-class UnitOfWorkWithFailingRollback(UnitOfWork):
+class UnitOfWorkWithFailingRollback(UnitOfWork):  # type: ignore [misc]
     def rollback(self) -> None:
         raise RuntimeError('Unexpected cleanup error')
 
@@ -362,7 +368,7 @@ def test_VariousCleanupErrorTypes_AllPropagateOriginal(
     entity = Entity()
     repo.add(entity)
 
-    class SpecificErrorUOW(UnitOfWork):
+    class SpecificErrorUOW(UnitOfWork):  # type: ignore [misc]
         def rollback(self) -> None:
             raise error_type
 
@@ -379,7 +385,7 @@ def test_CleanupErrorWithoutOriginalException_PropagatesCleanupError() -> None:
     repo = FakeRepo()
     error_message = 'Unexpected cleanup error during commit'
 
-    class UnitOfWorkWithFailingCommit(UnitOfWork):
+    class UnitOfWorkWithFailingCommit(UnitOfWork):  # type: ignore [misc]
         def commit(self) -> None:
             raise RuntimeError(error_message)
 
