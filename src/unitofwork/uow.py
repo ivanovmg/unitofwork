@@ -51,19 +51,21 @@ class UnitOfWork:
             raise RuntimeError('UnitOfWork already committed')
 
         try:
-            for operation in self._operations:
-                operation()
-
-            for repo, _ in self._snapshots:
-                repo.commit()
-
-            self._committed = True
-            self._operations.clear()
-            self._snapshots.clear()
-
+            self._commit()
         except Exception as e:
             self.rollback()
             raise e
+
+    def _commit(self) -> None:
+        for operation in self._operations:
+            operation()
+
+        for repo, _ in self._snapshots:
+            repo.commit()
+
+        self._committed = True
+        self._operations.clear()
+        self._snapshots.clear()
 
     def rollback(self) -> None:
         if self._committed:
