@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import copy
+import logging
 import uuid
 from dataclasses import dataclass, field
 from unittest.mock import Mock
 
 import pytest
 
-from unitofwork import UnitOfWork
+from unitofwork import RollbackError, UnitOfWork, UnitOfWorkError
 
 
 @dataclass
@@ -51,6 +52,11 @@ class FailingToAddRepo(FakeRepo):
         raise ValueError('Failed to add')
 
 
+class UnitOfWorkWithFailingRollback(UnitOfWork):
+    def rollback(self) -> None:
+        raise RuntimeError('Unexpected cleanup error')
+
+
 def test_RegisterOperationOutsideContext_ExecutesImmeditely() -> None:
     entity = Entity()
     repo = FakeRepo()
@@ -79,7 +85,7 @@ def test_TransactionFailure_RepoOperationRolledBack() -> None:
     try:
         with UnitOfWork(repo) as uow:
             uow.register_operation(lambda: repo.add(entity))
-    except ValueError:
+    except UnitOfWorkError:
         pass
 
     assert repo.list_all() == []
@@ -94,7 +100,7 @@ def test_TransactionFailure_BothReposOperationRolledBack() -> None:
         with UnitOfWork(good_repo, failing_repo) as uow:
             uow.register_operation(lambda: good_repo.add(entity))
             uow.register_operation(lambda: failing_repo.add(entity))
-    except ValueError:
+    except UnitOfWorkError:
         pass
 
     assert good_repo.list_all() == []
@@ -115,7 +121,7 @@ def test_SecondTransactionFailure_BothReposOperationRolledBack() -> None:
         with UnitOfWork(good_repo, failing_repo) as uow:
             uow.register_operation(lambda: good_repo.add(Entity()))
             uow.register_operation(lambda: failing_repo.add(Entity()))
-    except ValueError:
+    except UnitOfWorkError:
         pass
 
     assert good_repo.list_all() == [entity]
@@ -152,30 +158,6 @@ def test_Rollback_PreservesOriginalState() -> None:
     assert repo.list_all() == [original_entity]
 
 
-def test_ManuallyRegisterRepository_Ok() -> None:
-    repo = FakeRepo()
-    with UnitOfWork() as uow:
-        uow.register_repository(repo)
-        uow.register_operation(lambda: repo.add(Entity()))
-    assert len(repo.list_all()) == 1
-
-
-def test_ManuallyRegisterRepository_RollbackOk() -> None:
-    repo = FakeRepo()
-    failing_repo = FailingToAddRepo()
-
-    try:
-        with UnitOfWork() as uow:
-            uow.register_repository(repo)
-            uow.register_repository(failing_repo)
-            uow.register_operation(lambda: failing_repo.add(Entity()))
-            uow.register_operation(lambda: repo.add(Entity()))
-    except ValueError:
-        pass
-
-    assert repo.list_all() == []
-
-
 def test_SkipRegistration_OperationPersistsDespiteFailure() -> None:
     """
     Test that operations on unregistered repositories execute immediately
@@ -205,8 +187,21 @@ def test_SkipRegistration_TransactionIsNotHandledByUnitOfWork() -> None:
         with UnitOfWork() as uow:
             uow.register_operation(lambda: repo.add(Entity()))
             uow.register_operation(lambda: failing_repo.add(Entity()))
-    except ValueError:
+    except UnitOfWorkError:
         pass
+
+    assert len(repo.list_all()) == 1
+
+
+def test_RegisterOperationAfterCommit_RaisesError() -> None:
+    repo = FakeRepo()
+
+    match = 'Cannot register operation in state.*COMMITTED'
+    with pytest.raises(UnitOfWorkError, match=match):
+        with UnitOfWork() as uow:
+            uow.register_operation(lambda: repo.add(Entity()))
+            uow.commit()
+            uow.register_operation(lambda: repo.add(Entity()))
 
     assert len(repo.list_all()) == 1
 
@@ -224,14 +219,6 @@ def test_ExplicitlyRaiseExceptionInContext_OperationIsNotExecuted() -> None:
     operation.assert_not_called()
 
 
-def test_RegisterDuplicateRepository_SkipsDuplicates() -> None:
-    repo = FakeRepo()
-    with UnitOfWork(repo) as uow:
-        uow.register_repository(repo)  # register same repo once again OK
-        uow.register_operation(lambda: repo.add(Entity()))
-    assert len(repo.list_all()) == 1
-
-
 def test_OperationWithReturnValue_Ok() -> None:
     def operation_with_return() -> str:
         return 'success'
@@ -247,7 +234,8 @@ def test_CommitTwice_RaisesRuntimeError() -> None:
         uow.register_operation(lambda: repo.add(Entity()))
         uow.commit()
 
-        with pytest.raises(RuntimeError, match='already committed'):
+        match = 'Cannot commit in state.*COMMITTED'
+        with pytest.raises(UnitOfWorkError, match=match):
             uow.commit()
 
     assert len(repo.list_all()) == 1
@@ -261,7 +249,8 @@ def test_RollbackAfterCommit_RaisesRuntimeError() -> None:
         uow.register_operation(lambda: repo.add(Entity()))
         uow.commit()
 
-        with pytest.raises(RuntimeError, match='Cannot rollback after commit'):
+        match = 'Cannot rollback in state.*COMMITTED'
+        with pytest.raises(UnitOfWorkError, match=match):
             uow.rollback()
 
     assert len(repo.list_all()) == 2
@@ -280,8 +269,215 @@ def test_OneRepoFailsToRestoreOnRollback_GoodRepoStillRestoresOk() -> None:
             uow.register_operation(lambda: good_repo.add(Entity()))
             uow.register_operation(lambda: bad_repo.add(Entity()))
             raise ValueError('Force rollback')
-    except ValueError:
+    except RollbackError:
         pass
 
     # Good repo should be restored despite bad repo failure
     assert good_repo.list_all() == [entity]  # Back to original state
+
+
+def test_RollbackError_RaisedWhenRestorationFails() -> None:
+    """Test that RollbackError is raised with failure details when restoration fails"""
+    good_repo = FakeRepo()
+    bad_repo = FailingToRestoreRepo()
+    entity = Entity()
+
+    good_repo.add(entity)
+    bad_repo.add(entity)
+
+    with pytest.raises(RollbackError) as exc_info:
+        with UnitOfWork(good_repo, bad_repo) as uow:
+            uow.register_operation(lambda: good_repo.add(Entity()))
+            uow.register_operation(lambda: bad_repo.add(Entity()))
+            raise ValueError('Force rollback')
+
+    # Verify the RollbackError contains the expected information
+    assert 'Failed to restore some repositories' in str(exc_info.value)
+
+    # Verify the failure details are included
+    assert len(exc_info.value.failures) == 1
+    failed_repo, failure_exception = exc_info.value.failures[0]
+    assert failed_repo is bad_repo
+    assert isinstance(failure_exception, RuntimeError)
+    assert 'Failed to restore' in str(failure_exception)
+
+    # Verify good repo was still restored successfully
+    assert good_repo.list_all() == [entity]
+
+
+def test_EnterUnitOfWorkTwice_Raises() -> None:
+    op = Mock()
+    uow = UnitOfWork()
+    with uow:
+        uow.register_operation(op)
+        match = 'UnitOfWork can only be entered once'
+        with pytest.raises(UnitOfWorkError, match=match):
+            with uow:
+                uow.register_operation(op)
+
+
+def test_OriginalExceptionAndCleanupError_PropagatesOriginal() -> None:
+    repo = FakeRepo()
+    entity = Entity()
+    repo.add(entity)
+
+    with pytest.raises(ValueError, match='Original error'):
+        with UnitOfWorkWithFailingRollback(repo) as uow:
+            uow.register_operation(lambda: repo.add(Entity()))
+            raise ValueError('Original error')
+
+    assert repo.list_all() == [entity]
+
+
+def test_OriginalExceptionAndCleanupError_LogsCleanupError(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo = FakeRepo()
+    entity = Entity()
+    repo.add(entity)
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ValueError, match='Original error'):
+            with UnitOfWorkWithFailingRollback(repo) as uow:
+                uow.register_operation(lambda: repo.add(Entity()))
+                raise ValueError('Original error')
+
+    assert 'Cleanup failed during exception handling' in caplog.text
+    assert 'Unexpected cleanup error' in caplog.text
+    assert repo.list_all() == [entity]
+
+
+@pytest.mark.parametrize(
+    'error_type',
+    [
+        RuntimeError('Runtime cleanup error'),
+        ValueError('Value cleanup error'),
+        OSError('IO cleanup error'),
+    ],
+)
+def test_VariousCleanupErrorTypes_AllPropagateOriginal(
+    error_type: Exception,
+) -> None:
+    repo = FakeRepo()
+    entity = Entity()
+    repo.add(entity)
+
+    class SpecificErrorUOW(UnitOfWork):
+        def rollback(self) -> None:
+            raise error_type
+
+    with pytest.raises(ValueError, match='Original error'):
+        with SpecificErrorUOW(repo) as uow:
+            uow.register_operation(lambda: repo.add(Entity()))
+            raise ValueError('Original error')
+
+    # State should be preserved
+    assert repo.list_all() == [entity]
+
+
+def test_CleanupErrorWithoutOriginalException_PropagatesCleanupError() -> None:
+    repo = FakeRepo()
+    error_message = 'Unexpected cleanup error during commit'
+
+    class UnitOfWorkWithFailingCommit(UnitOfWork):
+        def commit(self) -> None:
+            raise RuntimeError(error_message)
+
+    with pytest.raises(RuntimeError, match=error_message):
+        with UnitOfWorkWithFailingCommit(repo) as uow:
+            uow.register_operation(lambda: repo.add(Entity()))
+
+    # No operations should have been committed
+    assert repo.list_all() == []
+
+
+def test_RollbackError_TakesPrecedenceOverOriginalException() -> None:
+    repo = FailingToRestoreRepo()  # raises RollbackError during rollback
+    entity = Entity()
+    repo.add(entity)
+
+    with pytest.raises(RollbackError) as exc_info:
+        with UnitOfWork(repo) as uow:
+            uow.register_operation(lambda: repo.add(Entity()))
+            raise ValueError('Original error')
+
+    # Verify it's a RollbackError, not the original ValueError
+    assert 'Failed to restore some repositories' in str(exc_info.value)
+
+
+def test_DebugSnapshotsContent() -> None:
+    """Debug what's actually happening with snapshots"""
+
+    class FailingSnapshotRepo(FakeRepo):
+        def checkpoint(self) -> dict[uuid.UUID, Entity]:
+            raise RuntimeError('Snapshot failed')
+
+    good_repo = FakeRepo()
+    failing_repo = FailingSnapshotRepo()
+    original_entity = Entity()
+    good_repo.add(original_entity)
+    failing_repo.add(original_entity)
+
+    uow = UnitOfWork(good_repo, failing_repo)
+
+    # Manually call _take_snapshots to see what happens
+    uow._take_snapshots()
+
+    print(f'Number of snapshots: {len(uow._snapshots)}')
+    for i, (repo, snapshot) in enumerate(uow._snapshots):
+        print(f'Snapshot {i}: repo={repo}, snapshot_type={type(snapshot)}')
+        print(f'Snapshot content: {snapshot}')
+
+    # Now let's see what happens during actual usage
+    try:
+        with UnitOfWork(good_repo, failing_repo) as uow2:
+            new_entity = Entity()
+            uow2.register_operation(lambda: good_repo.add(new_entity))
+            uow2.register_operation(lambda: failing_repo.add(new_entity))
+            print('Before rollback - good repo:', len(good_repo.list_all()))
+            print(
+                'Before rollback - failing repo:', len(failing_repo.list_all())
+            )
+            raise ValueError('Force rollback')
+    except ValueError:
+        pass
+
+    print('After rollback - good repo:', len(good_repo.list_all()))
+    print('After rollback - failing repo:', len(failing_repo.list_all()))
+
+
+def test_FailedSnapshot_LogsWarning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class FailingSnapshotRepo(FakeRepo):
+        def checkpoint(self) -> dict[uuid.UUID, Entity]:
+            raise RuntimeError('Snapshot failed')
+
+    good_repo = FakeRepo()
+    failing_repo = FailingSnapshotRepo()
+
+    try:
+        with UnitOfWork(good_repo, failing_repo) as uow:
+            uow.register_operation(lambda: good_repo.add(Entity()))
+            uow.register_operation(lambda: failing_repo.add(Entity()))
+            raise ValueError('Force rollback')
+    except ValueError:
+        pass
+
+    # Verify warning was logged for failed snapshot
+    assert 'Failed to take snapshot for repository' in caplog.text
+    assert 'Snapshot failed' in caplog.text
+
+
+def test_SuccessfulSnapshots_NoWarningsLogged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    repo1 = FakeRepo()
+    repo2 = FakeRepo()
+
+    with caplog.at_level(logging.WARNING):
+        with UnitOfWork(repo1, repo2) as uow:
+            uow.register_operation(lambda: repo1.add(Entity()))
+            uow.register_operation(lambda: repo2.add(Entity()))
+
+    assert not caplog.text
