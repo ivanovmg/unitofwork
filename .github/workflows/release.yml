@@ -177,7 +177,7 @@ jobs:
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-      run: twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+      run: twine upload --verbose --repository-url https://test.pypi.org/legacy/ dist/*
 
     - name: Verify TestPyPI installation
       run: |
