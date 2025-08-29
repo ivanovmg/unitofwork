@@ -267,17 +267,34 @@ except ValueError as e:
 
 ## Architecture
 
-Core Components
+### Core Components
+
 - `UnitOfWork`: Main coordinator class managing transactions
 - `SupportsRollback`: Protocol defining repository interface
-- `InMemoryRepository`: Reference implementation with rollback support
+- `UnitOfWorkError`: Base exception for `UnitOfWork` errors
+- `RollbackError`: Exception raised when rollback fails partially
 
-Design Principles
+### Design Principles
+
 - Database Agnostic: Works with any persistence mechanism
 - Type Safe: Full static type checking support
 - Minimal API: Simple, intuitive interface
 - Extensible: Easy to adapt existing repositories
 - Thread Safe: Designed for concurrent usage
+
+### Key Principle: Structural Typing
+Your repositories do not need to inherit from SupportsRollback ---
+they just need to implement:
+
+``` python
+checkpoint() -> Any
+restore(snapshot: Any) -> None
+commit() -> None
+```
+
+This enables seamless integration with any persistence mechanism,
+provided it allows for creating a checkpoint and makes it technically possible
+to revert to this checkpoint.
 
 ## Advanced Usage
 
