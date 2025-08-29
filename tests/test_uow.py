@@ -411,47 +411,6 @@ def test_RollbackError_TakesPrecedenceOverOriginalException() -> None:
     assert 'Failed to restore some repositories' in str(exc_info.value)
 
 
-def test_DebugSnapshotsContent() -> None:
-    """Debug what's actually happening with snapshots"""
-
-    class FailingSnapshotRepo(FakeRepo):
-        def checkpoint(self) -> dict[uuid.UUID, Entity]:
-            raise RuntimeError('Snapshot failed')
-
-    good_repo = FakeRepo()
-    failing_repo = FailingSnapshotRepo()
-    original_entity = Entity()
-    good_repo.add(original_entity)
-    failing_repo.add(original_entity)
-
-    uow = UnitOfWork(good_repo, failing_repo)
-
-    # Manually call _take_snapshots to see what happens
-    uow._take_snapshots()
-
-    print(f'Number of snapshots: {len(uow._snapshots)}')
-    for i, (repo, snapshot) in enumerate(uow._snapshots):
-        print(f'Snapshot {i}: repo={repo}, snapshot_type={type(snapshot)}')
-        print(f'Snapshot content: {snapshot}')
-
-    # Now let's see what happens during actual usage
-    try:
-        with UnitOfWork(good_repo, failing_repo) as uow2:
-            new_entity = Entity()
-            uow2.register_operation(lambda: good_repo.add(new_entity))
-            uow2.register_operation(lambda: failing_repo.add(new_entity))
-            print('Before rollback - good repo:', len(good_repo.list_all()))
-            print(
-                'Before rollback - failing repo:', len(failing_repo.list_all())
-            )
-            raise ValueError('Force rollback')
-    except ValueError:
-        pass
-
-    print('After rollback - good repo:', len(good_repo.list_all()))
-    print('After rollback - failing repo:', len(failing_repo.list_all()))
-
-
 def test_FailedSnapshot_LogsWarning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
