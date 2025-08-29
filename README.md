@@ -22,23 +22,65 @@ $ pip install unitofwork
 ## Quick Start
 
 ``` python
-from unitofwork import UnitOfWork, InMemoryRepository
+import copy
+from dataclasses import dataclass
+from typing import TypeVar
 
+from unitofwork import UnitOfWork
+
+@dataclass(frozen=True)
 class User:
-    def __init__(self, id: int, name: str, email: str):
-        self.id = id
-        self.name = name
-        self.email = email
+    id: int
+    name: str
+    email: str
+
+@dataclass(frozen=True)
+class Product:
+    sku: str
+    title: str
+    price: float
+
+ID = TypeVar('ID')
+T = TypeVar('T')
+
+class InMemoryRepository[ID, T]:
+    """In-memory repository implementation with rollback support."""
+
+    def __init__(self, id_field: str = 'id'):
+        self._data: dict[ID, T] = {}
+        self._id_field = id_field
+        self._snapshots: list[dict[ID, T]] = []
+
+    def checkpoint(self) -> dict[ID, T]:
+        """Create a deep copy snapshot of current data."""
+        snapshot = copy.deepcopy(self._data)
+        self._snapshots.append(snapshot)
+        return snapshot
+
+    def restore(self, snapshot: dict[ID, T]) -> None:
+        """Restore data from snapshot."""
+        self._data = copy.deepcopy(snapshot)
+
+    def commit(self) -> None:
+        """Clear snapshots after successful commit."""
+        self._snapshots.clear()
+
+    def add(self, entity: T) -> None:
+        """Add an entity to the repository."""
+        entity_id = getattr(entity, self._id_field)
+        if entity_id in self._data:
+            raise ValueError(f'Entity with ID {entity_id} already exists')
+        self._data[entity_id] = entity
+
 
 # Create repositories
-user_repo = InMemoryRepository[int, User](id_field="id")
-product_repo = InMemoryRepository[str, Product](id_field="sku")
+user_repo = InMemoryRepository[int, User](id_field='id')
+product_repo = InMemoryRepository[str, Product](id_field='sku')
 
 # Atomic transaction across multiple repositories
 with UnitOfWork(user_repo, product_repo) as uow:
-    uow.register_operation(lambda: user_repo.add(User(1, "Alice", "alice@example.com")))
-    uow.register_operation(lambda: product_repo.add(Product("laptop-123", "Laptop", 999.99)))
-    
+    uow.register_operation(lambda: user_repo.add(User(1, 'Alice', 'alice@example.com')))
+    uow.register_operation(lambda: product_repo.add(Product('laptop-123', 'Laptop', 999.99)))
 # Both operations commit together or roll back together!
 ```
 
