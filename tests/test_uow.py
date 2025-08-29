@@ -446,3 +446,17 @@ def test_SuccessfulSnapshots_NoWarningsLogged(
             uow.register_operation(lambda: repo2.add(Entity()))
 
     assert not caplog.text
+
+
+def test_ManualRollback() -> None:
+    first_repo = FakeRepo()
+    second_repo = FakeRepo()
+
+    with UnitOfWork(first_repo, second_repo) as uow:
+        uow.register_operation(lambda: first_repo.add(Entity()))
+        uow.register_operation(lambda: second_repo.add(Entity()))
+        if True:  # some condition to trigger manual rollback
+            uow.rollback()
+
+    assert first_repo.list_all() == []
+    assert second_repo.list_all() == []

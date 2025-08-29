@@ -298,7 +298,7 @@ to revert to this checkpoint.
 
 ## Advanced Usage
 
-### Partial Rollback
+### Manual Rollback
 
 ``` python
 with UnitOfWork(user_repo, product_repo) as uow:
