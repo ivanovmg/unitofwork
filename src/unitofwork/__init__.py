@@ -3,6 +3,7 @@
 
 import logging
 
+from .interfaces import SupportsRollback
 from .uow import RollbackError, UnitOfWork, UnitOfWorkError
 
 
@@ -13,6 +14,7 @@ logger.addHandler(logging.NullHandler())
 
 __all__ = [
     'RollbackError',
+    'SupportsRollback',
     'UnitOfWork',
     'UnitOfWorkError',
 ]

@@ -4,6 +4,11 @@
 from typing import Any, Protocol
 
 
+__all__ = [
+    'SupportsRollback',
+]
+
+
 class SupportsRollback(Protocol):
     """Protocol for repositories that support rollback functionality"""
 
