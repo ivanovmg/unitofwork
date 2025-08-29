@@ -200,8 +200,12 @@ with UnitOfWork(product_repo) as uow:
 
 ### Mixed Repository Types
 
+Provided you have multiple repositories
+implementing `SupportsRollback` interface,
+the same `UnitOfWork` pattern can be applied to all of them.
+
 ``` python
-from unitofwork import UnitOfWork, InMemoryRepository, SupportsRollback
+from unitofwork import UnitOfWork
 from sqlalchemy.orm import Session
 from your_app.repositories import SQLUserRepository, FileLogRepository
 
