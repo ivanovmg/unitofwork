@@ -12,6 +12,7 @@ Designed for clean architecture, type safety, and atomic transactions across mix
 - No Dependencies: Pure Python implementation
 - Comprehensive Testing: 100% test coverage with extensive test suite
 - Rollback Support: Automatic rollback for in-memory repositories
+- Protocol-Based: Uses structural typing with `SupportsRollback` interface
 
 ## Installation (PENDING)
 
@@ -24,64 +25,128 @@ $ pip install unitofwork
 ``` python
 import copy
 from dataclasses import dataclass
-from typing import TypeVar
+from uuid import UUID, uuid4
 
 from unitofwork import UnitOfWork
 
-@dataclass(frozen=True)
-class User:
-    id: int
-    name: str
-    email: str
+# Your repositories must implement the SupportsRollback interface
+class InMemoryUserRepository:
+    def __init__(self):
+        self._users: dict[UUID, User] = {}
+        self._snapshots: list[dict[UUID, User]] = []
 
-@dataclass(frozen=True)
-class Product:
-    sku: str
-    title: str
-    price: float
-
-ID = TypeVar('ID')
-T = TypeVar('T')
-
-class InMemoryRepository[ID, T]:
-    """In-memory repository implementation with rollback support."""
-
-    def __init__(self, id_field: str = 'id'):
-        self._data: dict[ID, T] = {}
-        self._id_field = id_field
-        self._snapshots: list[dict[ID, T]] = []
-
-    def checkpoint(self) -> dict[ID, T]:
-        """Create a deep copy snapshot of current data."""
-        snapshot = copy.deepcopy(self._data)
+    def checkpoint(self) -> dict[UUID, User]:
+        snapshot = copy.deepcopy(self._users)
         self._snapshots.append(snapshot)
         return snapshot
 
-    def restore(self, snapshot: dict[ID, T]) -> None:
-        """Restore data from snapshot."""
-        self._data = copy.deepcopy(snapshot)
+    def restore(self, snapshot: dict[UUID, User]) -> None:
+        self._users = snapshot
 
     def commit(self) -> None:
         """Clear snapshots after successful commit."""
         self._snapshots.clear()
 
-    def add(self, entity: T) -> None:
-        """Add an entity to the repository."""
-        entity_id = getattr(entity, self._id_field)
-        if entity_id in self._data:
-            raise ValueError(f'Entity with ID {entity_id} already exists')
-        self._data[entity_id] = entity
+    def add(self, user: User) -> None:
+        self._users[user.id] = user
 
+@dataclass
+class User:
+    id: UUID
+    name: str
+    email: str
 
-# Create repositories
-user_repo = InMemoryRepository[int, User](id_field='id')
-product_repo = InMemoryRepository[str, Product](id_field='sku')
+# Create repository that follows SupportsRollback interface
+user_repo = InMemoryUserRepository()
 
-# Atomic transaction across multiple repositories
-with UnitOfWork(user_repo, product_repo) as uow:
-    uow.register_operation(lambda: user_repo.add(User(1, 'Alice', 'alice@example.com')))
-    uow.register_operation(lambda: product_repo.add(Product('laptop-123', 'Laptop', 999.99)))
-# Both operations commit together or roll back together!
+# Atomic transaction
+with UnitOfWork(user_repo) as uow:
+    user = User(uuid4(), "Alice", "alice@example.com")
+    uow.register_operation(lambda: user_repo.add(user))
+
+# Operation is committed automatically on successful exit
+```
+
+## SupportsRollback interface
+
+All repositories must implement three essential methods:
+
+``` python
+from typing import Any, Protocol
+
+class SupportsRollback(Protocol):
+    """Protocol that all repositories must follow to work with UnitOfWork"""
+    
+    def checkpoint(self) -> Any:
+        """Return a snapshot of the current state for potential rollback"""
+        ...
+    
+    def restore(self, snapshot: Any) -> None:
+        """Restore state from a previously taken snapshot"""
+        ...
+    
+    def commit(self) -> None:
+        """Finalize the transaction after successful operations"""
+        ...
+```
+
+### Implementing the interface
+
+#### In-memory repository example
+
+For in-memory repo we simply make a deep copy of the repo content
+before the transaction (``checkpoint``).
+On failure we can `restore` using this deep copy of the repo content
+as shown below:
+
+``` python
+class InMemoryRepository:
+    def __init__(self):
+        self._data = {}
+        self._snapshots = []
+    
+    def checkpoint(self) -> dict:
+        return copy.deepcopy(self._data)
+    
+    def restore(self, snapshot: dict) -> None:
+        self._data = snapshot
+    
+    def commit(self) -> None:
+        self._snapshots.clear()
+```
+
+#### SQL repository example
+
+In case of an SQL repository,
+we can use [SAVEPOINT](https://www.sqltutorial.net/savepoint.html)
+to save the transaction checkpoint.
+It allows us to ``ROLLBACK to SAVEPOINT`` if the transaction fails.
+
+``` python
+from sqlalchemy.engine import Connection
+
+# Example: SQLAlchemy repository
+class SQLUserRepository:
+    def __init__(self, connection: Connection):
+        self.conn = connection
+        self._savepoint = None
+    
+    def checkpoint(self) -> str:
+        """Create a database savepoint"""
+        if not self.conn.in_transaction():
+            self.conn.begin()
+        self._savepoint = f"savepoint_{id(self)}"
+        self.conn.execute(f"SAVEPOINT {self._savepoint}")
+        return self._savepoint
+    
+    def restore(self, savepoint: str) -> None:
+        """Rollback to savepoint"""
+        self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+    
+    def commit(self) -> None:
+        """Commit the transaction"""
+        if self.conn.in_transaction():
+            self.conn.commit()
 ```
 
 ## Why Unit of Work?
