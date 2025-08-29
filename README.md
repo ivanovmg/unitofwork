@@ -12,6 +12,7 @@ Designed for clean architecture, type safety, and atomic transactions across mix
 - No Dependencies: Pure Python implementation
 - Comprehensive Testing: 100% test coverage with extensive test suite
 - Rollback Support: Automatic rollback for in-memory repositories
+- Protocol-Based: Uses structural typing with `SupportsRollback` interface
 
 ## Installation (PENDING)
 
@@ -22,24 +23,130 @@ $ pip install unitofwork
 ## Quick Start
 
 ``` python
-from unitofwork import UnitOfWork, InMemoryRepository
+import copy
+from dataclasses import dataclass
+from uuid import UUID, uuid4
 
+from unitofwork import UnitOfWork
+
+# Your repositories must implement the SupportsRollback interface
+class InMemoryUserRepository:
+    def __init__(self):
+        self._users: dict[UUID, User] = {}
+        self._snapshots: list[dict[UUID, User]] = []
+
+    def checkpoint(self) -> dict[UUID, User]:
+        snapshot = copy.deepcopy(self._users)
+        self._snapshots.append(snapshot)
+        return snapshot
+
+    def restore(self, snapshot: dict[UUID, User]) -> None:
+        self._users = snapshot
+
+    def commit(self) -> None:
+        """Clear snapshots after successful commit."""
+        self._snapshots.clear()
+
+    def add(self, user: User) -> None:
+        self._users[user.id] = user
+
+@dataclass
 class User:
-    def __init__(self, id: int, name: str, email: str):
-        self.id = id
-        self.name = name
-        self.email = email
+    id: UUID
+    name: str
+    email: str
 
-# Create repositories
-user_repo = InMemoryRepository[int, User](id_field="id")
-product_repo = InMemoryRepository[str, Product](id_field="sku")
+# Create repository that follows SupportsRollback interface
+user_repo = InMemoryUserRepository()
 
-# Atomic transaction across multiple repositories
-with UnitOfWork(user_repo, product_repo) as uow:
-    uow.register_operation(lambda: user_repo.add(User(1, "Alice", "alice@example.com")))
-    uow.register_operation(lambda: product_repo.add(Product("laptop-123", "Laptop", 999.99)))
+# Atomic transaction
+with UnitOfWork(user_repo) as uow:
+    user = User(uuid4(), "Alice", "alice@example.com")
+    uow.register_operation(lambda: user_repo.add(user))
+
+# Operation is committed automatically on successful exit
+```
+
+## SupportsRollback interface
+
+All repositories must implement three essential methods:
+
+``` python
+from typing import Any, Protocol
+
+class SupportsRollback(Protocol):
+    """Protocol that all repositories must follow to work with UnitOfWork"""
     
-# Both operations commit together or roll back together!
+    def checkpoint(self) -> Any:
+        """Return a snapshot of the current state for potential rollback"""
+        ...
+    
+    def restore(self, snapshot: Any) -> None:
+        """Restore state from a previously taken snapshot"""
+        ...
+    
+    def commit(self) -> None:
+        """Finalize the transaction after successful operations"""
+        ...
+```
+
+### Implementing the interface
+
+#### In-memory repository example
+
+For in-memory repo we simply make a deep copy of the repo content
+before the transaction (``checkpoint``).
+On failure we can `restore` using this deep copy of the repo content
+as shown below:
+
+``` python
+class InMemoryRepository:
+    def __init__(self):
+        self._data = {}
+        self._snapshots = []
+    
+    def checkpoint(self) -> dict:
+        return copy.deepcopy(self._data)
+    
+    def restore(self, snapshot: dict) -> None:
+        self._data = snapshot
+    
+    def commit(self) -> None:
+        self._snapshots.clear()
+```
+
+#### SQL repository example
+
+In case of an SQL repository,
+we can use [SAVEPOINT](https://www.sqltutorial.net/savepoint.html)
+to save the transaction checkpoint.
+It allows us to ``ROLLBACK to SAVEPOINT`` if the transaction fails.
+
+``` python
+from sqlalchemy.engine import Connection
+
+# Example: SQLAlchemy repository
+class SQLUserRepository:
+    def __init__(self, connection: Connection):
+        self.conn = connection
+        self._savepoint = None
+    
+    def checkpoint(self) -> str:
+        """Create a database savepoint"""
+        if not self.conn.in_transaction():
+            self.conn.begin()
+        self._savepoint = f"savepoint_{id(self)}"
+        self.conn.execute(f"SAVEPOINT {self._savepoint}")
+        return self._savepoint
+    
+    def restore(self, savepoint: str) -> None:
+        """Rollback to savepoint"""
+        self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+    
+    def commit(self) -> None:
+        """Commit the transaction"""
+        if self.conn.in_transaction():
+            self.conn.commit()
 ```
 
 ## Why Unit of Work?
@@ -93,8 +200,12 @@ with UnitOfWork(product_repo) as uow:
 
 ### Mixed Repository Types
 
+Provided you have multiple repositories
+implementing `SupportsRollback` interface,
+the same `UnitOfWork` pattern can be applied to all of them.
+
 ``` python
-from unitofwork import UnitOfWork, InMemoryRepository, SupportsRollback
+from unitofwork import UnitOfWork
 from sqlalchemy.orm import Session
 from your_app.repositories import SQLUserRepository, FileLogRepository
 
@@ -156,21 +267,38 @@ except ValueError as e:
 
 ## Architecture
 
-Core Components
+### Core Components
+
 - `UnitOfWork`: Main coordinator class managing transactions
 - `SupportsRollback`: Protocol defining repository interface
-- `InMemoryRepository`: Reference implementation with rollback support
+- `UnitOfWorkError`: Base exception for `UnitOfWork` errors
+- `RollbackError`: Exception raised when rollback fails partially
 
-Design Principles
+### Design Principles
+
 - Database Agnostic: Works with any persistence mechanism
 - Type Safe: Full static type checking support
 - Minimal API: Simple, intuitive interface
 - Extensible: Easy to adapt existing repositories
 - Thread Safe: Designed for concurrent usage
 
+### Key Principle: Structural Typing
+Your repositories do not need to inherit from SupportsRollback ---
+they just need to implement:
+
+``` python
+checkpoint() -> Any
+restore(snapshot: Any) -> None
+commit() -> None
+```
+
+This enables seamless integration with any persistence mechanism,
+provided it allows for creating a checkpoint and makes it technically possible
+to revert to this checkpoint.
+
 ## Advanced Usage
 
-### Partial Rollback
+### Manual Rollback
 
 ``` python
 with UnitOfWork(user_repo, product_repo) as uow:
