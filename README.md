@@ -177,7 +177,7 @@ with UnitOfWork(user_repo, product_repo) as uow:
 ### Basic Usage
 
 ``` python
-from unitofwork import UnitOfWork, InMemoryRepository
+from unitofwork import UnitOfWork
 
 # Create repository with custom ID field
 class Product:
