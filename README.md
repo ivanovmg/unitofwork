@@ -44,7 +44,6 @@ class InMemoryUserRepository:
         self._users = snapshot
 
     def commit(self) -> None:
-        """Clear snapshots after successful commit."""
         self._snapshots.clear()
 
     def add(self, user: User) -> None:
