@@ -14,7 +14,7 @@ Designed for clean architecture, type safety, and atomic transactions across mix
 - Rollback Support: Automatic rollback for in-memory repositories
 - Protocol-Based: Uses structural typing with `SupportsRollback` interface
 
-## Installation (PENDING)
+## Installation
 
 ``` bash
 $ pip install unitofwork
@@ -44,7 +44,6 @@ class InMemoryUserRepository:
         self._users = snapshot
 
     def commit(self) -> None:
-        """Clear snapshots after successful commit."""
         self._snapshots.clear()
 
     def add(self, user: User) -> None:
@@ -178,7 +177,7 @@ with UnitOfWork(user_repo, product_repo) as uow:
 ### Basic Usage
 
 ``` python
-from unitofwork import UnitOfWork, InMemoryRepository
+from unitofwork import UnitOfWork
 
 # Create repository with custom ID field
 class Product:
