@@ -14,7 +14,7 @@ Designed for clean architecture, type safety, and atomic transactions across mix
 - Rollback Support: Automatic rollback for in-memory repositories
 - Protocol-Based: Uses structural typing with `SupportsRollback` interface
 
-## Installation (PENDING)
+## Installation
 
 ``` bash
 $ pip install unitofwork
