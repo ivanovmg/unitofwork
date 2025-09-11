@@ -134,18 +134,37 @@ class SQLUserRepository:
         """Create a database savepoint"""
         if not self.conn.in_transaction():
             self.conn.begin()
-        self._savepoint = f"savepoint_{id(self)}"
-        self.conn.execute(f"SAVEPOINT {self._savepoint}")
+        self._savepoint = f'savepoint_{id(self)}'
+        statement = sqlalchemy.text(f'SAVEPOINT {self._savepoint}')
+        self.conn.execute(statement)
         return self._savepoint
-    
+
     def restore(self, savepoint: str) -> None:
         """Rollback to savepoint"""
-        self.conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-    
+        if not self._savepoint or savepoint != self._savepoint:
+            return
+
+        try:
+            statement = sqlalchemy.text(f'ROLLBACK TO SAVEPOINT {savepoint}')
+            self.conn.execute(statement)
+        except sqlalchemy.exc.OperationalError as e:
+            if 'no such savepoint' in str(e).lower():
+                # Savepoint was already released (maybe automatically by SQLite)
+                # This is OK - means work was already committed
+                pass
+            else:
+                raise
+
     def commit(self) -> None:
-        """Commit the transaction"""
-        if self.conn.in_transaction():
-            self.conn.commit()
+        """Release savepoint"""
+        if self._savepoint:
+            try:
+                self.conn.execute(
+                    sqlalchemy.text(f'RELEASE SAVEPOINT {self._savepoint}')
+                )
+            except Exception as err:
+                print(f'Error releasing savepoint: {err}')
+            self._savepoint = None
 ```
 
 ## Why Unit of Work?
