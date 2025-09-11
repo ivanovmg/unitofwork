@@ -4,6 +4,7 @@
 import logging
 
 from .interfaces import SupportsRollback
+from .sql_uow import SqlUnitOfWork
 from .uow import RollbackError, UnitOfWork, UnitOfWorkError
 
 
@@ -14,6 +15,7 @@ logger.addHandler(logging.NullHandler())
 
 __all__ = [
     'RollbackError',
+    'SqlUnitOfWork',
     'SupportsRollback',
     'UnitOfWork',
     'UnitOfWorkError',
