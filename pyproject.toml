@@ -48,6 +48,7 @@ dev = [
     'types-setuptools',
     'build>=0.10.0',
     'twine>=4.0.0',
+    'sqlalchemy~=2.0',
 ]
 docs = [
     'sphinx>=7.0.0',
