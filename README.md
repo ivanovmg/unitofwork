@@ -223,16 +223,18 @@ implementing `SupportsRollback` interface,
 the same `UnitOfWork` pattern can be applied to all of them.
 
 ``` python
-from unitofwork import UnitOfWork
-from sqlalchemy.orm import Session
+from unitofwork import SqlUnitOfWork, UnitOfWork
 from your_app.repositories import SQLUserRepository, FileLogRepository
 
 # Mix different repository types
-sql_user_repo = SQLUserRepository(session)
+sql_user_repo = SQLUserRepository(connection)
 in_memory_cache = InMemoryRepository[str, CachedData](id_field="key")
 file_log_repo = FileLogRepository("/path/to/logs")
 
-with UnitOfWork(sql_user_repo, in_memory_cache, file_log_repo) as uow:
+with SqlUnitOfWork(  # use for SQL-involved operations
+    UnitOfWork(sql_user_repo, in_memory_cache, file_log_repo),
+    connection,
+) as uow:
     uow.register_operation(lambda: sql_user_repo.add_user(new_user))
     uow.register_operation(lambda: in_memory_cache.add(cached_data))
     uow.register_operation(lambda: file_log_repo.log_operation("user_created"))
