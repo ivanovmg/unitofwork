@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Protocol
+from typing import Any, Protocol
 
 from .uow import UnitOfWork
 
@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 class Connection(Protocol):
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
+    def in_transaction(self) -> bool: ...
+    def begin(self) -> Any: ...
 
 
 class SqlUnitOfWork:
@@ -32,38 +34,53 @@ class SqlUnitOfWork:
     ) -> None:
         self._base_uow = base_uow
         self._connection = connection
+        self._should_commit = False
 
     def register_operation(self, operation) -> None:
         return self._base_uow.register_operation(operation)
 
     def __enter__(self) -> SqlUnitOfWork:
+        if not self._connection.in_transaction():
+            self._connection.begin()
+            self._should_commit = True
+        else:
+            self._should_commit = False
+
         self._base_uow.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        base_exception = None
+
         try:
             result = self._base_uow.__exit__(exc_type, exc_val, exc_tb)
+        except Exception as exc:
+            # Store the exception to re-raise later
+            base_exception = exc
+            result = False
 
-            # Manage the actual database transaction
-            if exc_type is not None:
-                self._connection.rollback()
+        # Handle transaction based on both the original exception AND base_uow failure
+        if self._should_commit:
+            if exc_type is not None or base_exception is not None:
+                # Either the original operation failed OR base_uow.__exit__ failed - rollback
+                try:
+                    self._connection.rollback()
+                except Exception as exc:
+                    logger.error(
+                        'Failed to rollback database transaction in SqlUnitOfWork: %s',
+                        exc,
+                        extra={
+                            'base_exception': str(base_exception)
+                            if base_exception
+                            else None
+                        },
+                    )
             else:
+                # Everything succeeded - commit
                 self._connection.commit()
 
-            return result
-        except Exception as exc:
-            logger.exception(
-                'Error during SqlUnitOfWork cleanup: %s',
-                exc,
-            )
-            logger.error(
-                'Attempting to rollback database transaction as fallback'
-            )
-            try:
-                self._connection.rollback()
-            except Exception as rollback_error:
-                logger.error(
-                    'Failed to rollback database transaction: %s',
-                    rollback_error,
-                )
-            raise
+        # If base_uow.__exit__ raised an exception, re-raise it
+        if base_exception is not None:
+            raise base_exception
+
+        return result
