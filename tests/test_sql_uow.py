@@ -1,6 +1,5 @@
 from collections.abc import Iterable
 from typing import Any
-from unittest import mock
 from uuid import uuid4
 
 import pytest
@@ -67,6 +66,9 @@ class SqlRepositoryUnderTest:
 
     def commit(self) -> None:
         """Release savepoint"""
+        self._release_savepoint()
+
+    def _release_savepoint(self):
         if self._savepoint:
             try:
                 self.conn.execute(
@@ -132,43 +134,65 @@ def test_OneTransactionFails_RollbackOk(in_memory_db: Connection) -> None:
     assert broken_repo.get_by_id(id3) is None
 
 
-def test_BaseUoWExceptionOnExit_Rollback() -> None:
-    base_uow = mock.MagicMock(spec=UnitOfWork)
-    base_uow.__exit__.side_effect = UnitOfWorkError('Base UoW failed')
-    connection = mock.Mock(spec=Connection)
+def test_BaseUoWExceptionOnExit_Rollback(in_memory_db: Connection) -> None:
+    class FailingUnitOfWork(UnitOfWork):
+        def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+            raise UnitOfWorkError('Base UoW failed')
 
+    repo = SqlRepositoryUnderTest(in_memory_db)
     with pytest.raises(UnitOfWorkError, match='Base UoW failed'):
-        with SqlUnitOfWork(base_uow, connection):
-            pass
+        with SqlUnitOfWork(
+            FailingUnitOfWork(repo),
+            in_memory_db,
+        ) as uow:
+            uow.register_operation(lambda: repo.insert_record('id1', 'item'))
 
-    connection.rollback.assert_called_once()
+    assert repo.get_by_id('id1') is None
 
 
-def test_OriginalException_Rollback() -> None:
-    base_uow = mock.MagicMock(spec=UnitOfWork)
-    connection = mock.Mock(spec=Connection)
-
+def test_OriginalException_Rollback(in_memory_db: Connection) -> None:
     # Simulate the scenario where base_uow.__exit__ doesn't raise an exception
     # but there was an original exception that caused us to enter this path
+    repo = SqlRepositoryUnderTest(in_memory_db)
     with pytest.raises(RuntimeError, match='Original error'):
-        with SqlUnitOfWork(base_uow, connection):
+        with SqlUnitOfWork(UnitOfWork(repo), in_memory_db) as uow:
+            uow.register_operation(lambda: repo.insert_record('id1', 'item'))
             raise RuntimeError('Original error')
 
-    connection.rollback.assert_called_once()
-    connection.commit.assert_not_called()
+    assert repo.get_by_id('id1') is None
 
 
-def test_RollbackFailure_HandlesGracefully() -> None:
-    base_uow = mock.MagicMock(spec=UnitOfWork)
-    base_uow.__exit__.side_effect = UnitOfWorkError('Base UoW cleanup failed')
+class FailingRollbackConnection:
+    """Wrapper that makes rollback fail"""
 
-    connection = mock.Mock(spec=Connection)
-    connection.rollback = mock.Mock(
-        side_effect=RuntimeError('Rollback failed')
-    )
+    def __init__(self, real_connection: Connection):
+        self._conn = real_connection
+        self.rollback_called = False
 
+    def __getattr__(self, name):
+        # Delegate all undefined attributes/methods to the real connection
+        return getattr(self._conn, name)
+
+    def rollback(self):
+        self.rollback_called = True
+        raise RuntimeError('Rollback failed')
+
+    def __eq__(self, other):
+        return self._conn == other
+
+    def __repr__(self):
+        return f'FailingRollbackConnection({self._conn!r})'
+
+
+def test_RollbackFailure_HandlesGracefully(in_memory_db: Connection) -> None:
+    class FailingUnitOfWork(UnitOfWork):
+        def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+            raise UnitOfWorkError('Base UoW cleanup failed')
+
+    connection = FailingRollbackConnection(in_memory_db)
+    repo = SqlRepositoryUnderTest(connection)
     with pytest.raises(UnitOfWorkError, match='Base UoW cleanup failed'):
-        with SqlUnitOfWork(base_uow, connection):
+        with SqlUnitOfWork(FailingUnitOfWork(repo), connection):
             pass
 
-    connection.rollback.assert_called_once()
+    assert connection.rollback_called
