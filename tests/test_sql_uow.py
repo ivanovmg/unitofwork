@@ -134,6 +134,43 @@ def test_OneTransactionFails_RollbackOk(in_memory_db: Connection) -> None:
     assert broken_repo.get_by_id(id3) is None
 
 
+@pytest.mark.xfail(reason='#GH-15')
+def test_OneTransactionFailsWithoutExplicitReleaseSavepoint_RollbackOk(
+    in_memory_db: Connection,
+) -> None:
+    class RepoWithNoOpReleaseSavepoint(SqlRepositoryUnderTest):
+        def _release_savepoint(self) -> None:
+            pass
+
+    class BrokenRepo(SqlRepositoryUnderTest):
+        def insert_record(self, record_id: str, name: str) -> None:
+            raise RuntimeError('Something happened')
+
+    good_repo = RepoWithNoOpReleaseSavepoint(in_memory_db)
+    broken_repo = BrokenRepo(in_memory_db)
+    id1 = str(uuid4())
+    with UnitOfWork(good_repo) as uow:
+        uow.register_operation(lambda: good_repo.insert_record(id1, 'first'))
+
+    id2 = str(uuid4())
+    id3 = str(uuid4())
+    with pytest.raises(UnitOfWorkError, match='Commit failed, rolled back'):
+        with SqlUnitOfWork(
+            UnitOfWork(good_repo, broken_repo),
+            connection=in_memory_db,
+        ) as uow:
+            uow.register_operation(
+                lambda: broken_repo.insert_record(id3, 'bad')
+            )
+            uow.register_operation(
+                lambda: good_repo.insert_record(id2, 'good')
+            )
+
+    assert good_repo.get_by_id(id1) is not None
+    assert good_repo.get_by_id(id2) is None
+    assert broken_repo.get_by_id(id3) is None
+
+
 def test_BaseUoWExceptionOnExit_Rollback(in_memory_db: Connection) -> None:
     class FailingUnitOfWork(UnitOfWork):
         def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
