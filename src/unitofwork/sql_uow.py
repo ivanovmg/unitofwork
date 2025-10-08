@@ -61,26 +61,29 @@ class SqlUnitOfWork:
 
         # Handle transaction based on both the original exception AND base_uow failure
         if self._should_commit:
-            if exc_type is not None or base_exception is not None:
-                # Either the original operation failed OR base_uow.__exit__ failed - rollback
-                try:
-                    self._connection.rollback()
-                except Exception as exc:
-                    logger.error(
-                        'Failed to rollback database transaction in SqlUnitOfWork: %s',
-                        exc,
-                        extra={
-                            'base_exception': str(base_exception)
-                            if base_exception
-                            else None
-                        },
-                    )
-            else:
-                # Everything succeeded - commit
-                self._connection.commit()
+            self._commit(exc_type, base_exception)
 
         # If base_uow.__exit__ raised an exception, re-raise it
         if base_exception is not None:
             raise base_exception
 
         return result
+
+    def _commit(self, exc_type, base_exception):
+        if exc_type is not None or base_exception is not None:
+            # Either the original operation failed OR base_uow.__exit__ failed - rollback
+            try:
+                self._connection.rollback()
+            except Exception as exc:
+                logger.error(
+                    'Failed to rollback database transaction in SqlUnitOfWork: %s',
+                    exc,
+                    extra={
+                        'base_exception': str(base_exception)
+                        if base_exception
+                        else None
+                    },
+                )
+        else:
+            # Everything succeeded - commit
+            self._connection.commit()
