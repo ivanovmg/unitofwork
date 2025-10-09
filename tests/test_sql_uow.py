@@ -1,3 +1,6 @@
+# Copyright (c) 2025 Maxim Ivanov
+# SPDX-License-Identifier: MIT
+
 from collections.abc import Iterable
 from typing import Any
 from unittest import mock
