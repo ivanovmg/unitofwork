@@ -1,8 +1,13 @@
 # CHANGELOG
 
+## v0.3.0 (2025-10-09)
+
+- Fix SQL transaction isolation failure (closes #15)
+
+
 ## v0.2.0 (2025-09-11)
 
-- Add SqlUnitOfWork, (closes #9)
+- Add SqlUnitOfWork (closes #9)
 
 
 ## v0.1.1 (2025-09-01)
