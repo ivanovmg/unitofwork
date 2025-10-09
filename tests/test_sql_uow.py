@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from typing import Any
+from unittest import mock
 from uuid import uuid4
 
 import pytest
@@ -231,3 +232,20 @@ def test_RollbackFailure_HandlesGracefully(in_memory_db: Connection) -> None:
             pass
 
     assert connection.rollback_called
+
+
+def test_CommitActuallyHappensWithoutRollback(
+    in_memory_db: Connection,
+) -> None:
+    """Test that commit is called when everything succeeds"""
+    repo = SqlRepositoryUnderTest(in_memory_db)
+
+    with mock.patch.object(in_memory_db, 'commit') as mock_commit:
+        with mock.patch.object(in_memory_db, 'rollback') as mock_rollback:
+            with SqlUnitOfWork(UnitOfWork(repo), in_memory_db) as uow:
+                uow.register_operation(
+                    lambda: repo.insert_record('test', 'item')
+                )
+
+            mock_commit.assert_called_once()
+            mock_rollback.assert_not_called()
