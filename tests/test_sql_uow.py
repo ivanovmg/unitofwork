@@ -28,7 +28,6 @@ def in_memory_db() -> Iterable[Connection]:
         # Ensure we start with clean transaction state
         if conn.in_transaction():
             conn.rollback()
-        conn.begin()
 
         yield conn
         conn.rollback()
@@ -134,7 +133,6 @@ def test_OneTransactionFails_RollbackOk(in_memory_db: Connection) -> None:
     assert broken_repo.get_by_id(id3) is None
 
 
-@pytest.mark.xfail(reason='#GH-15')
 def test_OneTransactionFailsWithoutExplicitReleaseSavepoint_RollbackOk(
     in_memory_db: Connection,
 ) -> None:
